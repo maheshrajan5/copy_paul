@@ -1,0 +1,101 @@
+################################################################################
+# GitLab CI  example
+# Based upon requirements outlined in OP acceptance criteriea document
+# https://docs.google.com/document/d/183l-JM53PDEAqHYjWQ7MAPJp88-Sf5cSBQB0UZk7p8A/edit?usp=sharing
+################################################################################
+
+# Global varaibles inherited by all jobs in the pipeline
+variables:
+  # SCHEDULER_PARAMETERS is the varaible for defining arguments for the
+  # batch system, for slurm we are utilizing salloc.
+  # https://slurm.schedmd.com/salloc.html
+  # Note the runner is responsbile for detecting the batch system present
+  SCHEDULER_PARAMETERS: "--nodes=1 --partition=ecp-p9-4v100 --job-name=global"
+
+# stages defined as such
+# note (build, test, deploy) are defaults if nothing is defined
+stages:
+  - build
+  - test
+  - deploy
+
+# environments that will be targeted
+# using yaml anchors (duplicate/inherit properties)
+# <<: *slurm
+.slurm: &slurm
+  # tags are used to specify the runner
+  # https://ecp-gitlab.newmexicoconsortium.org:543/admin/runners
+  tags: ['nmc', 'slurm', 'xx-testing', 'dosequis']
+
+# Job (top level element)
+# With the batch runner 1 job = 1 batch submission
+# Example -> build:test
+# salloc --nodes=1 --partition=ecp-p9-4v100 --job-name=global ...
+# Once allocated it will execute upon the script
+build:test:
+  # Specify the stage (defalt = test)
+  stage: build
+  # Will inherit the .slurm: &slurm
+  <<: *slurm
+  script:
+    # Shell scripts executed by the runner (under your UID)
+
+# Remeber that with the batch runner you are within the  allocation
+    # so responsbility for setting up your environment (e.g. module load)
+    # must be account for here.
+    - echo "Hello World!"
+    - srun env | grep SLURM_JOB_NAME
+    - sh make.sh
+    # we can see the artifacts that have been created
+    - ls && ls binaries/
+    # User is responsbile for defining parrallel run (srun, mpirun, ...)
+    - whoami
+  artifacts:
+    # Artifacts are attached to the job, allowing us to pass between jobs
+    #E.g. binary after build step ...
+    # https://docs.gitlab.com/ee/ci/yaml/#artifactspaths
+    name: "$CI_JOB_NAME"
+    paths:
+      - binaries/
+
+test:one:
+  stage: test
+  <<: *slurm
+  script:
+    - echo "Do a test here..."
+    - srun env | grep SLURM_JOB_NAME
+    - whoami
+    - exit
+    - echo "You should not see this"
+  variables:
+    # Job-level varaibles Will override the gloabl variables
+    # https://docs.gitlab.com/ee/ci/variables/README.html
+    SCHEDULER_PARAMETERS: "--nodes=1 --partition=ecp-p9-4v100 --job-name=test1"
+
+test:two:
+  stage: test
+  <<: *slurm
+  script:
+    - echo "Perform the test here..."
+    - srun env | grep SLURM_JOB_NAME
+    # Will see a job-name that matches the job-level variables in this example
+    - whoami
+    - BADCOMMAND  # will fail
+    - echo $?
+  variables:
+    SCHEDULER_PARAMETERS: "--nodes=1 --partition=ecp-p9-4v100 --job-name=test2"
+  allow_failure: true
+
+deploy:test:
+  stage: deploy
+  <<: *slurm
+  script:
+    - echo "Deploy buid ..."
+    - srun env | grep SLURM_JOB_NAME
+    - ls binaries/
+    - cat binaries/test.txt
+    - whoami
+  dependencies:
+    # Depends on the first job so artifacts can be passed
+    # More details: https://docs.gitlab.com/ee/ci/yaml/#dependencies
+    - build:test
